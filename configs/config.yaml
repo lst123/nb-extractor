@@ -1,6 +1,0 @@
-deviceRoles:
-  Leaf_switch: 43
-  Spine_switch: 47
-  Core_router: 58
-  Core_switch: 2
-  Management_switch: 5
