@@ -1,14 +1,14 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/lst123/nb-extractor/netbox"
+	"github.com/lst123/nb-extractor/internal/netbox"
 	"gopkg.in/yaml.v3"
 )
 
@@ -21,6 +21,11 @@ type privCfg struct {
 		Site  string `yaml:"site"`
 		Token string `yaml:"token"`
 	} `yaml:"server"`
+}
+
+type Nb struct {
+	data *[]byte
+	mu   sync.Mutex
 }
 
 func parseYaml(file string, i interface{}) error {
@@ -37,23 +42,23 @@ func parseYaml(file string, i interface{}) error {
 	return nil
 }
 
-func makeRoot(ch chan []byte) func(http.ResponseWriter, *http.Request) {
-	var nb []byte
-	var s sync.Mutex
-	go func() {
-		for {
-			nbLA := <-ch
-			s.Lock()
-			nb = nbLA
-			s.Unlock()
-		}
-	}()
+func makeRoot(nb *Nb, token string) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		reqToken := r.Header.Get("Authorization")
+		splitToken := strings.Split(reqToken, "Bearer")
+		if len(splitToken) != 2 {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		reqToken = strings.TrimSpace(splitToken[1])
+
+		if reqToken != token {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		w.Header().Add("Content-Type", "application/json")
-		s.Lock()
-		defer s.Unlock()
-		if len(nb) > 0 {
-			w.Write(nb)
+		if nb.data != nil {
+			w.Write(*nb.data)
 		}
 	}
 }
@@ -83,9 +88,10 @@ func main() {
 		return
 	}
 
-	ch := make(chan []byte)
+	nb := Nb{}
+
 	// Start a http server
-	handleRoot := makeRoot(ch)
+	handleRoot := makeRoot(&nb, prCfg.Server.Token)
 	http.HandleFunc("/", handleRoot)
 	go func() {
 		log.Println("Starting server on port 8080.")
@@ -94,20 +100,18 @@ func main() {
 
 	// Try to fetch new Json data and publish
 	for {
-		fmt.Println("Cycle is started...")
-		c := make(chan netbox.RespData)
-		go netbox.NetboxJson(prCfg.Netbox.Token, fullUrl.URL, c)
-		fmt.Println("Got the Nebox data")
-		r := <-c
-
-		if r.Err != nil {
-			ch <- []byte{}
-			log.Println(r.Err)
+		nbLocal, err := netbox.NetboxJson(prCfg.Netbox.Token, fullUrl.URL)
+		if err != nil {
+			log.Println(err)
 		} else {
-			fmt.Println("Sending data")
-			ch <- r.Data
+			if len(nbLocal) > 0 {
+				nb.mu.Lock()
+				nb.data = &nbLocal
+				nb.mu.Unlock()
+			}
 		}
+		log.Println("Got the Netbox data")
 
-		time.Sleep(10 * time.Minute)
+		time.Sleep(5 * time.Minute)
 	}
 }

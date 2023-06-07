@@ -142,16 +142,14 @@ func prepareJson(b []byte) ([]byte, error) {
 	return dataJson, nil
 }
 
-func NetboxJson(token string, url string, c chan<- RespData) {
-	defer close(c)
+func NetboxJson(token string, url string) ([]byte, error) {
 	nbJson, err := fetchJson(token, url)
 	if err != nil {
-		c <- RespData{Err: errors.New("can't fetch Json from Netbox")}
+		return nil, fmt.Errorf("%w", err)
 	}
 	dataJson, err := prepareJson(nbJson)
 	if err != nil {
-		c <- RespData{Err: errors.New("can't create a new Json and marshal it")}
+		return nil, fmt.Errorf("%w", err)
 	}
-	r := RespData{Data: dataJson, Err: nil}
-	c <- r
+	return dataJson, nil
 }
